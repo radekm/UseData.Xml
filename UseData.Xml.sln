@@ -1,0 +1,22 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "UseData.Xml", "UseData.Xml\UseData.Xml.fsproj", "{9B07E0CD-597A-4AEE-A152-1353BB35FB74}"
+EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "UseData.Xml.Test", "UseData.Xml.Test\UseData.Xml.Test.fsproj", "{E849CA12-BAB3-4D75-AC1C-2F0D1B4C7DCE}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{9B07E0CD-597A-4AEE-A152-1353BB35FB74}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9B07E0CD-597A-4AEE-A152-1353BB35FB74}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9B07E0CD-597A-4AEE-A152-1353BB35FB74}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9B07E0CD-597A-4AEE-A152-1353BB35FB74}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E849CA12-BAB3-4D75-AC1C-2F0D1B4C7DCE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E849CA12-BAB3-4D75-AC1C-2F0D1B4C7DCE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E849CA12-BAB3-4D75-AC1C-2F0D1B4C7DCE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E849CA12-BAB3-4D75-AC1C-2F0D1B4C7DCE}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
