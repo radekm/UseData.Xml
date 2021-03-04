@@ -1,5 +1,6 @@
 ﻿module UseData.Xml.Test.Elem
 
+open System
 open System.Xml.Linq
 open NUnit.Framework
 
@@ -26,7 +27,7 @@ module Basic =
 
     [<Test>]
     let ``child elements`` ()  =
-        let e = ``child elements - input`` |> toElem
+        use e = ``child elements - input`` |> toElem
         let dogs = e |> Elem.children "dog" (Elem.text Parse.string)
         let pig = e |> Elem.child "pig" (Elem.text Parse.string)
         let cat = e |> Elem.childOpt "cat" (Elem.text Parse.string)
@@ -43,7 +44,7 @@ module Basic =
 
     [<Test>]
     let attributes ()  =
-        let e = ``attributes - input`` |> toElem
+        use e = ``attributes - input`` |> toElem
         let people =
             e
             |> Elem.children "person" (fun e ->
@@ -64,7 +65,7 @@ module Errors =
 
     [<Test>]
     let ``multiple children when single child is expected`` () =
-        let e = ``multiple children when single child is expected - input`` |> toElem
+        use e = ``multiple children when single child is expected - input`` |> toElem
         let exn =
             Assert.Throws<WrongCount>(fun () ->
                 e |> Elem.child "name" Elem.ignoreAll)
@@ -75,7 +76,7 @@ module Errors =
 
     [<Test>]
     let ``multiple children when at most one child is expected`` () =
-        let e = ``multiple children when at most one child is expected - input`` |> toElem
+        use e = ``multiple children when at most one child is expected - input`` |> toElem
         let exn =
             Assert.Throws<WrongCount>(fun () ->
                 e |> Elem.childOpt "name" Elem.ignoreAll |> ignore)
@@ -87,19 +88,140 @@ module Errors =
 
     [<Test>]
     let ``no child when one child is expected`` () =
-        let e = ``no child when one child is expected - input`` |> toElem
+        use e = ``no child when one child is expected - input`` |> toElem
         let exn =
             Assert.Throws<WrongCount>(fun () ->
                 e |> Elem.child "name" Elem.ignoreAll)
         Assert.AreEqual(Root "dog", exn.which)
 
-    // TODO no attribute when it's expected
-    // TODO element with mixed content
+    let ``no attribute when one attribute is expected - input`` = """
+    <city></city>
+    """
 
-// module TracingUnusedContent
-// TODO unused element
-// TODO unused attribute
-// TODO unused text
+    [<Test>]
+    let ``no attribute when one attribute is expected`` () =
+        use e = ``no attribute when one attribute is expected - input`` |> toElem
+        let exn =
+            Assert.Throws<WrongCount>(fun () ->
+                e |> Elem.attr "name" Parse.string |> ignore)
+        Assert.AreEqual(Root "city", exn.which)
+
+    let ``mixed content in elements is not allowed - input`` = """
+    <country>
+      Czech Republic
+      <president>Vaclav Havel</president>
+    </country>
+    """
+    
+    [<Test>]
+    let ``mixed content in elements is not allowed`` () =
+        let exn =
+            Assert.Throws<Exception>(fun () ->
+                use e = ``mixed content in elements is not allowed - input`` |> toElem 
+                ())
+        Assert.AreEqual("Element Root \"country\" contains mixed content", exn.Message)
+
+module TracingUnusedContent =
+    type Unused = { Which : WhichElem
+                    UnusedAttrs : Set<string>
+                    UnusedChildren : Set<string>
+                    UnusedText : string option }
+    
+    let toElem onUnused str =
+        let keys m = m |> Map.toSeq |> Seq.map fst |> Set.ofSeq
+        let unusedTracer = { new ITracer with
+                             override _.OnParsed(_, _, _, _, _, _) = ()
+                             override _.OnUnused(which, unusedAttrs, unusedChildren, unusedText) =
+                                 onUnused { Which = which
+                                            UnusedAttrs = unusedAttrs |> keys
+                                            UnusedChildren = unusedChildren |> keys
+                                            UnusedText = unusedText }
+                         }
+        str
+        |> XDocument.Parse
+        |> fun doc -> doc.Root
+        |> Elem.make unusedTracer
+
+    let ``unused element - input`` = """
+    <company>
+        <address>
+            <street>Baker Street</street>
+            <city>London</city>
+        </address>
+    </company>
+    """
+
+    [<Test>]
+    let ``unused element`` () =
+        let expectedUnusedContent =
+            [ { Which = Child (Root "company", "address", 0)
+                UnusedAttrs = Set.empty
+                UnusedChildren = Set.ofList ["city"]
+                UnusedText = None
+              } ]
+
+        let log = ResizeArray()
+        let street =
+            use e = ``unused element - input`` |> toElem log.Add
+            e
+            |> Elem.child "address" (fun e ->
+                e |> Elem.child "street" (Elem.text Parse.string))
+
+        Assert.AreEqual("Baker Street", street)
+        // We should convert `log` to a list after `e` is disposed.
+        Assert.AreEqual(expectedUnusedContent, log |> Seq.toList) 
+
+    let ``unused attribute - input`` = """
+    <company>
+        <address street="Baker Street" city="London" />
+    </company>
+    """
+
+    
+    [<Test>]
+    let ``unused attribute`` () =
+        let expectedUnusedContent =
+            [ { Which = Child (Root "company", "address", 0)
+                UnusedAttrs = Set.ofList ["street"]
+                UnusedChildren = Set.empty
+                UnusedText = None
+              } ]
+
+        let log = ResizeArray()
+        let city =
+            use e = ``unused attribute - input`` |> toElem log.Add
+            e
+            |> Elem.child "address" (fun e ->
+                e |> Elem.attr "city" Parse.string)
+
+        Assert.AreEqual("London", city)
+        // We should convert `log` to a list after `e` is disposed.
+        Assert.AreEqual(expectedUnusedContent, log |> Seq.toList) 
+
+    let ``unused text - input`` = ``unused element - input``
+    
+    [<Test>]
+    let ``unused text`` () =
+        let expectedUnusedContent =
+            [ { Which = Child (Child (Root "company", "address", 0), "city", 0)
+                UnusedAttrs = Set.empty
+                UnusedChildren = Set.empty
+                UnusedText = Some "London"
+              } ]
+
+        let log = ResizeArray()
+        let street =
+            use e = ``unused element - input`` |> toElem log.Add
+            e
+            |> Elem.child "address" (fun e ->
+                e |> Elem.child "city" ignore
+                e |> Elem.child "street" (Elem.text Parse.string))
+
+        Assert.AreEqual("Baker Street", street)
+        // We should convert `log` to a list after `e` is disposed.
+        Assert.AreEqual(expectedUnusedContent, log |> Seq.toList) 
+
+// TODO which with different indices than 0
 
 // module TracingParsedContent
 // TODO tracing parsed content
