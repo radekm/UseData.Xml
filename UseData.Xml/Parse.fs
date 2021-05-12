@@ -21,7 +21,7 @@ module Parse =
         match f parsed with
         | Result.Ok res -> res
         | Result.Error err -> raise <| ParseError (which, selector, s, err)
-        
+
     let validate (f : 'T -> string option) (p: StringParser<'T>) : StringParser<'T> = fun which selector s ->
         let parsed = p which selector s
         match f parsed with
@@ -38,7 +38,7 @@ module Parse =
         if s.Trim().Length > 0
         then Result.Ok s
         else Result.Error "Expected string with at least one non-whitespace character"
-    
+
     let stringOneOf (cases : string list) : StringParser<string> = fromFunction <| fun s ->
         if List.contains s cases
         then Result.Ok s
@@ -63,13 +63,13 @@ module Parse =
         | _ -> None)
 
     let bool = fromTryParse "Expected bool" Boolean.TryParse
-    
+
     let dateTimeOffsetFormats (formats : string list) : StringParser<DateTimeOffset> =
         fromTryParse $"Expected DateTimeOffset with one of following formats: %A{formats}" <| fun s ->
             DateTimeOffset.TryParseExact(
                 s,
                 List.toArray formats,
                 System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None)
+                System.Globalization.DateTimeStyles.AssumeUniversal)
 
     let dateTimeOffset = dateTimeOffsetFormats ["yyyy-MM-dd'T'HH:mm:ssK"]
