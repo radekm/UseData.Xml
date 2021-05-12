@@ -7,6 +7,8 @@ open System.Runtime.InteropServices
 open System.Xml.Linq
 
 exception WrongCount of which:WhichElem * msg:string
+    with
+        override me.Message = $"Error when parsing %A{me.which}: %s{me.msg}"
 
 [<Sealed>]
 type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
@@ -29,7 +31,7 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
         |> List.groupBy (fun el -> el.Name.LocalName)
         |> Map.ofList
     let text' =
-        let text =            
+        let text =
             xElem.Nodes()
             |> Seq.map (function
                 | :? XText as node -> node.Value
@@ -55,7 +57,7 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
         with get
     member val private UsedText = false
         with get, set
-        
+
     member private _.Check() = if disposed then raise <| ObjectDisposedException $"Elem %A{which}"
 
     interface IDisposable with
@@ -65,27 +67,27 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
 
             let removeKeysFromMap (keys : HashSet<'K>) map : Map<'K, 'V> =
                 map |> Map.filter (fun k _ ->  keys.Contains k |> not)
-                
+
             let unusedAttrs = removeKeysFromMap me.UsedAttrs me.Attrs
             let unusedChildren = removeKeysFromMap me.UsedChildren me.Children
             // Only if the text is non-whitespace.
             let unusedText = if me.UsedText || me.Text.Trim().Length = 0 then None else Some me.Text
             if not (unusedAttrs.IsEmpty && unusedChildren.IsEmpty && unusedText.IsNone) then
                 tracer.OnUnused(which, unusedAttrs, unusedChildren, unusedText)
-    
+
     static member make (tracer : ITracer) (xElem : XElement) = new Elem(WhichElem.make xElem, tracer, xElem)
-    
+
     static member private attrHelper (name : string) (p : StringParser<'T>) (elem : Elem) : 'T option =
         elem.Check()
-        
+
         if elem.UsedAttrs.Contains name then
             failwithf $"Attribute %s{name} in elem %A{elem.Which} already used"
         elem.UsedAttrs.Add name |> ignore
 
         elem.Attrs
         |> Map.tryFind name
-        |> Option.map (fun attr -> p elem.Which (Some name) attr.Value)        
-        
+        |> Option.map (fun attr -> p elem.Which (Some name) attr.Value)
+
     static member attrOpt
         ( name : string,
           [<CallerFilePath; Optional; DefaultParameterValue("")>] file : string,
@@ -145,7 +147,7 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
             which = elem.Which,
             selector = Some name,
             parsedValues = parsed)
-        parsed        
+        parsed
 
     static member childOpt
         ( name : string,
@@ -164,9 +166,9 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
             callerLine = line,
             which = elem.Which,
             selector = Some name,
-            parsedValues = parsed)        
-        result        
-    
+            parsedValues = parsed)
+        result
+
     static member child
         ( name : string,
           [<CallerFilePath; Optional; DefaultParameterValue("")>] file : string,
@@ -183,8 +185,8 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
             callerLine = line,
             which = elem.Which,
             selector = Some name,
-            parsedValues = parsed)        
-        result        
+            parsedValues = parsed)
+        result
 
     static member private textHelper (p : StringParser<'T>) (elem : Elem) : 'T =
         elem.Check()
@@ -194,7 +196,7 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
         elem.UsedText <- true
 
         p elem.Which None elem.Text
-    
+
     static member text
         ( p : StringParser<'T>,
           [<CallerFilePath; Optional; DefaultParameterValue("")>] file : string,
@@ -212,7 +214,7 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
 
     static member ignoreAll (elem : Elem) =
         elem.Check()
-        
+
         elem.Attrs |> Seq.iter (fun kv -> elem.UsedAttrs.Add kv.Key |> ignore)
         elem.Children |> Seq.iter (fun kv -> elem.UsedChildren.Add kv.Key |> ignore)
         elem.UsedText <- true
