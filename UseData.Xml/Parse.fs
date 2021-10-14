@@ -2,7 +2,9 @@ namespace UseData.Xml
 
 open System
 
-exception ParseError of which:WhichElem * selector:string option * input:string * message:string
+exception ParseError of which:WhichElem * selector:string option * input:string * msg:string
+    with
+        override me.Message = $"Error when parsing attribute or content %A{me.selector} of %A{me.which}: %s{me.msg}"
 
 module Parse =
     let fromTryParse (msg : string) (tryParse : string -> bool * 'T) : StringParser<'T> = fun which selector s ->
