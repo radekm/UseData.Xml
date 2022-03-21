@@ -7,24 +7,24 @@ exception ParseError of which:WhichElem * selector:string option * input:string 
         override me.Message = $"Error when parsing attribute or content %A{me.selector} of %A{me.which}: %s{me.msg}"
 
 module Parse =
-    let fromTryParse (msg : string) (tryParse : string -> bool * 'T) : StringParser<'T> = fun which selector s ->
+    let inline fromTryParse (msg : string) (tryParse : string -> bool * 'T) : StringParser<'T> = fun which selector s ->
         let parsed, res = tryParse s
         if parsed
         then res
         else raise <| ParseError (which, selector, s, msg)
 
-    let fromFunction (f : string -> Result<'T, string>) = fun which selector s ->
+    let inline fromFunction (f : string -> Result<'T, string>) = fun which selector s ->
         match f s with
         | Result.Ok res -> res
         | Result.Error err -> raise <| ParseError (which, selector, s, err)
 
-    let transform (f : 'T -> Result<'U, string>) (p : StringParser<'T>) : StringParser<'U> = fun which selector s ->
+    let inline transform (f : 'T -> Result<'U, string>) (p : StringParser<'T>) : StringParser<'U> = fun which selector s ->
         let parsed = p which selector s
         match f parsed with
         | Result.Ok res -> res
         | Result.Error err -> raise <| ParseError (which, selector, s, err)
 
-    let validate (f : 'T -> string option) (p: StringParser<'T>) : StringParser<'T> = fun which selector s ->
+    let inline validate (f : 'T -> string option) (p: StringParser<'T>) : StringParser<'T> = fun which selector s ->
         let parsed = p which selector s
         match f parsed with
         | None -> parsed

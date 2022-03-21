@@ -51,9 +51,9 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
     member _.Text = text'
     member private _.Tracer = tracer
 
-    member val private UsedAttrs = HashSet<string>()
+    member val private UsedAttrs = HashSet<string>(attrs'.Count)
         with get
-    member val private UsedChildren = HashSet<string>()
+    member val private UsedChildren = HashSet<string>(children'.Count)
         with get
     member val private UsedText = false
         with get, set
@@ -80,9 +80,8 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
     static member private attrHelper (name : string) (p : StringParser<'T>) (elem : Elem) : 'T option =
         elem.Check()
 
-        if elem.UsedAttrs.Contains name then
+        if elem.UsedAttrs.Add name |> not then
             failwithf $"Attribute %s{name} in elem %A{elem.Which} already used"
-        elem.UsedAttrs.Add name |> ignore
 
         elem.Attrs
         |> Map.tryFind name
@@ -123,9 +122,8 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
     static member private childHelper (name : string) (p : Elem -> 'T) (elem : Elem) : 'T list =
         elem.Check()
 
-        if elem.UsedChildren.Contains name then
+        if elem.UsedChildren.Add name |> not then
             failwithf $"Children %s{name} in elem %A{elem.Which} already used"
-        elem.UsedChildren.Add name |> ignore
 
         elem.Children
         |> Map.tryFind name

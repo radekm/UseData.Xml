@@ -7,12 +7,12 @@ type WhichElem =
     | Root of elemName:string
     | Child of parent:WhichElem * elemName:string * indexAmongElemsWithSameName:int
 
-    /// Name of the designated element.    
+    /// Name of the designated element.
     member me.Name =
         match me with
         | Root name -> name
         | Child (_, name, _) -> name
-    
+
 module WhichElem =
     // Slow when `elem` has lots of siblings.
     // Fast when `elem` is a root.
@@ -28,7 +28,7 @@ module WhichElem =
             Child (make parent, name, indexAmongElemsWithSameName)
 
 /// A parser which parses a string from XML into type `'T`.
-/// 
+///
 /// A parser `p` is called with three arguments `p which selector str`.
 /// Where `str` is the string which will be parsed. `which`
 /// and `selector` serve only for error reporting.
