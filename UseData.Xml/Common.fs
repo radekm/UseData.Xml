@@ -1,5 +1,6 @@
 ﻿namespace UseData.Xml
 
+open System.Collections.Generic
 open System.Xml.Linq
 
 /// Designates an element in a document.
@@ -45,9 +46,9 @@ type ITracer =
         callerLine:int *
         which:WhichElem *
         selector:string option *
-        parsedValues:'T list -> unit
+        parsedValues:'T[] -> unit
     abstract member OnUnused :
         which:WhichElem *
-        attrs:Map<string, XAttribute> *
-        children:Map<string, XElement list> *
+        attrs:Dictionary<string, string> *
+        children:Dictionary<string, ResizeArray<XElement>> *
         text:option<string> -> unit

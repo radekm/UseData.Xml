@@ -12,48 +12,56 @@ exception WrongCount of which:WhichElem * msg:string
 
 [<Sealed>]
 type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
-    let attrs' =
-        xElem.Attributes()
-        |> List.ofSeq
-        |> List.groupBy (fun attr -> attr.Name.LocalName)
-        |> List.map (function
-            | _name, [] -> failwith "Absurd"
-            | name, [attr] -> name, attr
-            | name, attrs ->
-                failwithf "%s %s"
-                    $"Element %A{which} contains multiple attributes "
-                    $"with same local name %s{name}: %A{attrs}")
-        |> Map.ofList
-    // We need the prime to ensure the name differs from the static method.
-    let children' =
-        xElem.Elements()
-        |> List.ofSeq
-        |> List.groupBy (fun el -> el.Name.LocalName)
-        |> Map.ofList
+    let unusedAttrs = Dictionary<string, string>()    
+    do for attr in xElem.Attributes() do
+        if unusedAttrs.TryAdd(attr.Name.LocalName, attr.Value) |> not then
+            failwithf "%s %s"
+                $"Element %A{which} contains multiple attributes "
+                $"with same local name %s{attr.Name.LocalName}: %A{xElem}"
+
+    let unusedChildren = Dictionary<string, ResizeArray<XElement>>()
+    do for el in xElem.Elements() do
+        let found, elems = unusedChildren.TryGetValue(el.Name.LocalName)
+        if found then
+            if elems[0].Name = el.Name then
+                elems.Add el
+            else
+                failwithf
+                    $"Element %A{which} contains multiple child elements "
+                    $"with same local name %s{el.Name.LocalName}: %A{xElem}"
+        else
+            let elems = ResizeArray()
+            elems.Add el
+            unusedChildren.Add(el.Name.LocalName, elems)
+
+    // Prime is to avoid conflicts with a function `text`. 
     let text' =
-        let text =
+        if unusedChildren.Count = 0 then
             xElem.Nodes()
             |> Seq.map (function
                 | :? XText as node -> node.Value
                 | _ -> "")
             |> String.concat ""
-        if not children'.IsEmpty then
-            if text.Trim().Length = 0
-            then ""
-            else failwith $"Element %A{which} contains mixed content"
-        else text
+        else
+            for node in xElem.Nodes() do
+                match node with
+                | :? XText as node when not (String.IsNullOrWhiteSpace node.Value) ->
+                    failwith $"Element %A{which} contains mixed content"
+                | _ -> ()
+            ""
+
     let mutable disposed = false
 
     member _.Name = which.Name
     member _.Which = which
-    member _.Attrs = attrs'
-    member _.Children = children'
-    member _.Text = text'
+    member internal _.UnusedAttrs = unusedAttrs
+    member internal _.UnusedChildren = unusedChildren
+    member internal _.Text = text'
     member private _.Tracer = tracer
 
-    member val private UsedAttrs = HashSet<string>(attrs'.Count)
+    member val private UsedAttrs = HashSet<string>(unusedAttrs.Count)
         with get
-    member val private UsedChildren = HashSet<string>(children'.Count)
+    member val private UsedChildren = HashSet<string>(unusedChildren.Count)
         with get
     member val private UsedText = false
         with get, set
@@ -65,15 +73,11 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
             if not disposed then
                 disposed <- true
 
-            let removeKeysFromMap (keys : HashSet<'K>) map : Map<'K, 'V> =
-                map |> Map.filter (fun k _ ->  keys.Contains k |> not)
+                // Only if the text is non-whitespace.
+                let unusedText = if me.UsedText || String.IsNullOrWhiteSpace me.Text then None else Some me.Text
 
-            let unusedAttrs = removeKeysFromMap me.UsedAttrs me.Attrs
-            let unusedChildren = removeKeysFromMap me.UsedChildren me.Children
-            // Only if the text is non-whitespace.
-            let unusedText = if me.UsedText || me.Text.Trim().Length = 0 then None else Some me.Text
-            if not (unusedAttrs.IsEmpty && unusedChildren.IsEmpty && unusedText.IsNone) then
-                tracer.OnUnused(which, unusedAttrs, unusedChildren, unusedText)
+                if unusedAttrs.Count > 0 || unusedChildren.Count > 0 || unusedText.IsSome then
+                    tracer.OnUnused(which, unusedAttrs, unusedChildren, unusedText)
 
     static member make (tracer : ITracer) (xElem : XElement) = new Elem(WhichElem.make xElem, tracer, xElem)
 
@@ -83,9 +87,10 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
         if elem.UsedAttrs.Add name |> not then
             failwithf $"Attribute %s{name} in elem %A{elem.Which} already used"
 
-        elem.Attrs
-        |> Map.tryFind name
-        |> Option.map (fun attr -> p elem.Which (Some name) attr.Value)
+        let found, value = elem.UnusedAttrs.Remove name
+        if found
+        then Some (p elem.Which (Some name) value)
+        else None
 
     static member attrOpt
         ( name : string,
@@ -99,7 +104,7 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
             callerLine = line,
             which = elem.Which,
             selector = Some name,
-            parsedValues = Option.toList parsed)
+            parsedValues = Option.toArray parsed)
         parsed
 
     static member attr
@@ -116,27 +121,27 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
                 callerLine = line,
                 which = elem.Which,
                 selector = Some name,
-                parsedValues = [parsed])
+                parsedValues = [| parsed |])
             parsed
 
-    static member private childHelper (name : string) (p : Elem -> 'T) (elem : Elem) : 'T list =
+    static member private childHelper (name : string) (p : Elem -> 'T) (elem : Elem) : 'T[] =
         elem.Check()
 
         if elem.UsedChildren.Add name |> not then
             failwithf $"Children %s{name} in elem %A{elem.Which} already used"
 
-        elem.Children
-        |> Map.tryFind name
-        |> Option.defaultValue []
-        |> List.mapi (fun i xElem ->
-            use elem = new Elem(Child (elem.Which, name, i), elem.Tracer, xElem)
-            p elem)
+        let found, children = elem.UnusedChildren.Remove name
+        if found then
+            Array.init children.Count (fun i ->
+                use elem = new Elem(Child (elem.Which, name, i), elem.Tracer, children[i])
+                p elem)
+        else Array.empty
 
     static member children
         ( name : string,
           [<CallerFilePath; Optional; DefaultParameterValue("")>] file : string,
           [<CallerLineNumber; Optional; DefaultParameterValue(0)>] line : int
-        ) : (Elem -> 'T) -> Elem -> 'T list = fun p elem ->
+        ) : (Elem -> 'T) -> Elem -> 'T[] = fun p elem ->
         let parsed = elem |> Elem.childHelper name p
         elem.Tracer.OnParsed(
             calledFunc = nameof Elem.children,
@@ -155,8 +160,8 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
         let parsed = elem |> Elem.childHelper name p
         let result =
             match parsed with
-            | [] -> None
-            | [x] -> Some x
+            | [||] -> None
+            | [| x |] -> Some x
             | _ -> raise <| WrongCount (elem.Which, $"Expected at most one child %s{name}")
         elem.Tracer.OnParsed(
             calledFunc = nameof Elem.childOpt,
@@ -175,7 +180,7 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
         let parsed = elem |> Elem.childHelper name p
         let result =
             match parsed with
-            | [x] -> x
+            | [| x |] -> x
             | _ -> raise <| WrongCount (elem.Which, $"Expected one child %s{name}")
         elem.Tracer.OnParsed(
             calledFunc = nameof Elem.child,
@@ -207,12 +212,14 @@ type Elem private (which : WhichElem, tracer : ITracer, xElem : XElement) =
             callerLine = line,
             which = elem.Which,
             selector = None,
-            parsedValues = [parsed])
+            parsedValues = [| parsed |])
         parsed
 
     static member ignoreAll (elem : Elem) =
         elem.Check()
 
-        elem.Attrs |> Seq.iter (fun kv -> elem.UsedAttrs.Add kv.Key |> ignore)
-        elem.Children |> Seq.iter (fun kv -> elem.UsedChildren.Add kv.Key |> ignore)
+        elem.UnusedAttrs |> Seq.iter (fun kv -> elem.UsedAttrs.Add kv.Key |> ignore)
+        elem.UnusedAttrs.Clear()
+        elem.UnusedChildren |> Seq.iter (fun kv -> elem.UsedChildren.Add kv.Key |> ignore)
+        elem.UnusedChildren.Clear()
         elem.UsedText <- true

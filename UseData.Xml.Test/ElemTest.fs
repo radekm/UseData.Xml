@@ -1,6 +1,7 @@
 ﻿module UseData.Xml.Test.Elem
 
 open System
+open System.Collections.Generic
 open System.IO
 open System.Xml.Linq
 
@@ -33,7 +34,7 @@ module Basic =
         let dogs = e |> Elem.children "dog" (Elem.text Parse.string)
         let pig = e |> Elem.child "pig" (Elem.text Parse.string)
         let cat = e |> Elem.childOpt "cat" (Elem.text Parse.string)
-        Assert.AreEqual(["A"; "D"], dogs)
+        Assert.AreEqual([| "A"; "D" |], dogs)
         Assert.AreEqual("B", pig)
         Assert.AreEqual(None, cat)
 
@@ -53,8 +54,8 @@ module Basic =
                 {| Name = e |> Elem.attr "name" Parse.string
                    Address = e |> Elem.attrOpt "address" Parse.string |})
         Assert.AreEqual(
-            [ {| Name = "Pete"; Address = None |}
-              {| Name = "Harry"; Address = Some "Little Whinging" |} ],
+            [| {| Name = "Pete"; Address = None |}
+               {| Name = "Harry"; Address = Some "Little Whinging" |} |],
             people)
 
 module Errors =
@@ -130,7 +131,7 @@ module TracingUnusedContent =
                     UnusedText : string option }
 
     let toElem onUnused str =
-        let keys m = m |> Map.toSeq |> Seq.map fst |> Set.ofSeq
+        let keys (d : Dictionary<_, _>) = d.Keys |> Set.ofSeq
         let unusedTracer = { new ITracer with
                              override _.OnParsed(_, _, _, _, _, _) = ()
                              override _.OnUnused(which, unusedAttrs, unusedChildren, unusedText) =
@@ -238,7 +239,8 @@ module TracingParsedContent =
                                             CallerLine = line
                                             Which = which
                                             Selector = selector
-                                            ParsedValues = parsedValues |> List.map (fun p -> p :> obj) }
+                                            ParsedValues =
+                                                parsedValues |> Array.map (fun p -> p :> obj) |> Array.toList }
                              override _.OnUnused(_, _, _, _) = ()
                            }
         str
