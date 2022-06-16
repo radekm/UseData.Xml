@@ -53,6 +53,38 @@ module Parse =
             | None -> Result.Error $"Expected one of following strings %A{cases |> List.map fst}"
             | Some (_, res) -> Result.Ok res
 
+    // `dateTimeOffset` must be defined before overriding `int.`
+    /// Accepts one of the following formats:
+    /// - Without fractional seconds `YYYY-mm-ddTHH:mm:ssZ` or `YYYY-mm-dd HH:mm:ssZ` (string length 20).
+    /// - With milliseconds `YYYY-mm-ddTHH:mm:ss.fffZ` or `YYYY-mm-dd HH:mm:ss.fffZ` (string length 24).
+    let dateTimeOffset : StringParser<DateTimeOffset> = fromFunction <| fun s ->
+        let error = Result.Error "Expected date time offset"
+        let inline readDigit i =
+            let d = int s[i] - int '0'
+            if d < 0 || d > 9
+            then failwithf "Not a digit %c" s[i]
+            else d
+
+        if s.Length < 20 || s[4] <> '-' || s[7] <> '-' || (s[10] <> 'T' && s[10] <> ' ') || s[13] <> ':' || s[16] <> ':'
+        then error
+        else
+            try
+                let year = ((readDigit 0 * 10 + readDigit 1) * 10 + readDigit 2) * 10 + readDigit 3
+                let month = readDigit 5 * 10 + readDigit 6
+                let day = readDigit 8 * 10 + readDigit 9
+                let hour = readDigit 11 * 10 + readDigit 12
+                let minute = readDigit 14 * 10 + readDigit 15
+                let second = readDigit 17 * 10 + readDigit 18
+
+                match s.Length with
+                | 20 when s[19] = 'Z' ->
+                    Result.Ok (DateTimeOffset(year, month, day, hour, minute, second, TimeSpan.Zero))
+                | 24 when s[19] = '.' && s[23] = 'Z' ->
+                    let millisecond = (readDigit 20 * 10 + readDigit 21) * 10 + readDigit 22
+                    Result.Ok (DateTimeOffset(year, month, day, hour, minute, second, millisecond, TimeSpan.Zero))
+                | _ -> error
+            with _ -> error
+
     let int = fromTryParse "Expected int" Int32.TryParse
     let uint = fromTryParse "Expected uint" UInt32.TryParse
 
@@ -66,6 +98,7 @@ module Parse =
 
     let bool = fromTryParse "Expected bool" Boolean.TryParse
 
+    /// This is very slow.
     let dateTimeOffsetFormats (formats : string list) : StringParser<DateTimeOffset> =
         fromTryParse $"Expected DateTimeOffset with one of following formats: %A{formats}" <| fun s ->
             DateTimeOffset.TryParseExact(
@@ -73,5 +106,3 @@ module Parse =
                 List.toArray formats,
                 System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.AssumeUniversal)
-
-    let dateTimeOffset = dateTimeOffsetFormats ["yyyy-MM-dd'T'HH:mm:ssK"]
