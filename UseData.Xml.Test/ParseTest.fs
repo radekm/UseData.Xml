@@ -13,6 +13,25 @@ let ``parse int`` () =
     Assert.AreEqual(4532, Parse.int which selector "4532")
 
 [<Test>]
+let ``parse decimal parses leading sign`` () =
+    Assert.AreEqual(4532M, Parse.decimal which selector "+4532")
+    Assert.AreEqual(-4532M, Parse.decimal which selector "-4532")
+
+[<Test>]
+let ``parse decimal parses dot`` () =
+    Assert.AreEqual(4532.72M, Parse.decimal which selector "4532.72")
+    Assert.AreEqual(0.1M, Parse.decimal which selector "0.1")
+    Assert.AreEqual(0.03M, Parse.decimal which selector "00.03")
+    Assert.AreEqual(0M, Parse.decimal which selector "0.0")
+    Assert.AreEqual(0M, Parse.decimal which selector "0.0")
+
+[<Test>]
+let ``parse decimal does not parse comma`` () =
+    Assert.Throws<ParseError>(fun () ->
+        Parse.decimal which selector "4532,7" |> ignore)
+    |> ignore
+
+[<Test>]
 let ``parse bool`` () =
     Assert.AreEqual(true, Parse.bool which selector "true")
 

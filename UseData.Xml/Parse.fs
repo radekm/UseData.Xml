@@ -91,7 +91,14 @@ module Parse =
     let int64 = fromTryParse "Expected int64" Int64.TryParse
     let uint64 = fromTryParse "Expected uint64" UInt64.TryParse
 
-    let decimal = fromTryParse "Expected decimal" Decimal.TryParse
+    let decimal =
+        fromTryParse "Expected decimal" <| fun s ->
+            Decimal.TryParse(
+                s,
+                System.Globalization.NumberStyles.AllowDecimalPoint |||
+                System.Globalization.NumberStyles.AllowLeadingSign,
+                System.Globalization.CultureInfo.InvariantCulture)
+
     let decimalNonNegative = decimal |> validate (function
         | x when x < 0m -> Some "Expected non-negative decimal"
         | _ -> None)
