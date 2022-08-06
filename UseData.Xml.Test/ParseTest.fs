@@ -48,6 +48,25 @@ let ``parse date time offset with milliseconds`` () =
         Parse.dateTimeOffset which selector "2021-05-31T23:12:04.999Z")
 
 [<Test>]
+let ``parse date time offset with 1 digit of fractional seconds`` () =
+    Assert.AreEqual(
+        DateTimeOffset(2022, 7, 25, 6, 0, 0, 400, TimeSpan.Zero),
+        Parse.dateTimeOffset which selector "2022-07-25T06:00:00.4Z")
+
+[<Test>]
+let ``parse date time offset with 7 digits of fractional seconds`` () =
+    Assert.AreEqual(
+        DateTimeOffset(2022, 7, 25, 6, 0, 0, TimeSpan.Zero).AddTicks(1340144L),        
+        Parse.dateTimeOffset which selector "2022-07-25T06:00:00.1340144Z")
+
+[<Test>]
+let ``parsing date time offset doesn't lose information - original string can be produced`` () =
+    let s = "2022-07-25T06:01:02.1340144Z"
+    let parsed = Parse.dateTimeOffset which selector s
+    let formatted = parsed.ToString("yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'")
+    Assert.AreEqual(s, formatted)
+
+[<Test>]
 let ``parse date time offset where date is separated from time by single space`` () =
     Assert.AreEqual(
         DateTimeOffset(2021, 5, 31, 23, 12, 4, TimeSpan.Zero),

@@ -54,9 +54,9 @@ module Parse =
             | Some (_, res) -> Result.Ok res
 
     // `dateTimeOffset` must be defined before overriding `int.`
-    /// Accepts one of the following formats:
+    /// Accepts either format without fraction seconds or format with up to 7 digits of fractional seconds:
     /// - Without fractional seconds `YYYY-mm-ddTHH:mm:ssZ` or `YYYY-mm-dd HH:mm:ssZ` (string length 20).
-    /// - With milliseconds `YYYY-mm-ddTHH:mm:ss.fffZ` or `YYYY-mm-dd HH:mm:ss.fffZ` (string length 24).
+    /// - With fractional seconds `YYYY-mm-ddTHH:mm:ss.fffZ` or `YYYY-mm-dd HH:mm:ss.fffZ` (string length 22-28).
     let dateTimeOffset : StringParser<DateTimeOffset> = fromFunction <| fun s ->
         let error = Result.Error "Expected date time offset"
         let inline readDigit i =
@@ -76,12 +76,19 @@ module Parse =
                 let minute = readDigit 14 * 10 + readDigit 15
                 let second = readDigit 17 * 10 + readDigit 18
 
+                let withoutFractionalSeconds = DateTimeOffset(year, month, day, hour, minute, second, TimeSpan.Zero) 
+
                 match s.Length with
-                | 20 when s[19] = 'Z' ->
-                    Result.Ok (DateTimeOffset(year, month, day, hour, minute, second, TimeSpan.Zero))
-                | 24 when s[19] = '.' && s[23] = 'Z' ->
-                    let millisecond = (readDigit 20 * 10 + readDigit 21) * 10 + readDigit 22
-                    Result.Ok (DateTimeOffset(year, month, day, hour, minute, second, millisecond, TimeSpan.Zero))
+                | 20 when s[19] = 'Z' -> Result.Ok withoutFractionalSeconds
+                | len when len >= 22 && len <= 28 && s[19] = '.' && s[len - 1] = 'Z' ->
+                    let mutable ticks = 0
+                    // Read fractional digits.
+                    for i = 20 to len - 2 do
+                        ticks <- ticks * 10 + readDigit i
+                    // Padding.
+                    for i = 1 to 28 - len do
+                        ticks <- ticks * 10
+                    Result.Ok (withoutFractionalSeconds.AddTicks ticks)
                 | _ -> error
             with _ -> error
 
