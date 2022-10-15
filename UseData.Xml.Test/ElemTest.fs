@@ -2,8 +2,7 @@
 
 open System
 open System.Collections.Generic
-open System.IO
-open System.Xml.Linq
+open System.Xml
 
 open NUnit.Framework
 
@@ -11,15 +10,18 @@ open UseData.Xml
 
 let toElem str =
     let noOpTracer = { new ITracer with
-                         override _.OnParsed(_, _, _, _, _, _) = ()
-                         override _.OnUnused(_, _, _, _) = ()
+                         override _.OnUnused(_, _, _, _) = failwith "Unexpected unused content"
                      }
-    str
-    |> XDocument.Parse
-    |> fun doc -> doc.Root
-    |> Elem.make noOpTracer
+    Elem.parseFromString noOpTracer str
 
 module Basic =
+    let ``xml declaration - input`` = """<?xml version="1.0" encoding="utf-16"?><animals />"""
+
+    [<Test>]
+    let ``xml declaration`` ()  =
+        use e = ``xml declaration - input`` |> toElem
+        Assert.AreEqual("animals", e.Name)
+
     let ``child elements - input`` = """
     <animals>
         <dog>A</dog>
@@ -124,6 +126,39 @@ module Errors =
                 ())
         Assert.AreEqual("Element Root \"country\" contains mixed content", exn.Message)
 
+module InvalidXml =
+    let ``missing root element - input`` = """<?xml version="1.0" encoding="utf-16"?>"""
+
+    [<Test>]
+    let ``missing root element`` () =
+        let exn =
+            Assert.Throws<XmlException>(fun () ->
+                use _ = ``missing root element - input`` |> toElem
+                ())
+        Assert.AreEqual("Root element is missing.", exn.Message)
+
+    let ``different closing tag - input`` = """
+    <root>
+      <a></b>
+    </root>
+    """
+
+    [<Test>]
+    let ``different closing tag`` () =
+        Assert.Throws<XmlException>(fun () ->
+            use _ = ``different closing tag - input`` |> toElem
+            ())
+        |> ignore
+
+    let ``missing closing tag - input`` = """<root><person>"""
+
+    [<Test>]
+    let ``missing closing tag`` () =
+        Assert.Throws<XmlException>(fun () ->
+            use _ = ``missing closing tag - input`` |> toElem
+            ())
+        |> ignore
+
 module TracingUnusedContent =
     type Unused = { Which : WhichElem
                     UnusedAttrs : Set<string>
@@ -133,17 +168,13 @@ module TracingUnusedContent =
     let toElem onUnused str =
         let keys (d : Dictionary<_, _>) = d.Keys |> Set.ofSeq
         let unusedTracer = { new ITracer with
-                             override _.OnParsed(_, _, _, _, _, _) = ()
                              override _.OnUnused(which, unusedAttrs, unusedChildren, unusedText) =
                                  onUnused { Which = which
                                             UnusedAttrs = unusedAttrs |> keys
                                             UnusedChildren = unusedChildren |> keys
                                             UnusedText = unusedText }
                            }
-        str
-        |> XDocument.Parse
-        |> fun doc -> doc.Root
-        |> Elem.make unusedTracer
+        Elem.parseFromString unusedTracer str
 
     let ``unused element - input`` = """
     <company>
@@ -222,108 +253,3 @@ module TracingUnusedContent =
         Assert.AreEqual("Baker Street", street)
         // We should convert `log` to a list after `e` is disposed.
         Assert.AreEqual(expectedUnusedContent, log |> Seq.toList)
-
-module TracingParsedContent =
-    type Parsed = { CalledFunc : string
-                    CallerFile : string
-                    CallerLine : int
-                    Which : WhichElem
-                    Selector : string option
-                    ParsedValues : obj list }
-
-    let toElem onParsed str =
-        let unusedTracer = { new ITracer with
-                             override _.OnParsed(calledFunc, file, line, which, selector, parsedValues) =
-                                 onParsed { CalledFunc = calledFunc
-                                            CallerFile = file
-                                            CallerLine = line
-                                            Which = which
-                                            Selector = selector
-                                            ParsedValues =
-                                                parsedValues |> Array.map (fun p -> p :> obj) |> Array.toList }
-                             override _.OnUnused(_, _, _, _) = ()
-                           }
-        str
-        |> XDocument.Parse
-        |> fun doc -> doc.Root
-        |> Elem.make unusedTracer
-
-    let ``parsed content is traced - input`` = """
-    <book id="101">
-        <author>Tomas</author>
-        <author>Jon</author>
-        <title>Real-World Functional Programming</title>
-    </book>
-    """
-
-    [<Test>]
-    let ``parsed content is traced`` () =
-        let log = ResizeArray()
-        use e = ``parsed content is traced - input`` |> toElem log.Add
-
-        let bookIdLine = 1 + int __LINE__
-        let _ = e |> Elem.attr "id" Parse.string
-
-        let authorsLine = 1 + int __LINE__
-        let _ = e |> Elem.children "author" (Elem.text Parse.string)
-
-        let titleLine = 1 + int __LINE__
-        let _ = e |> Elem.child "title" (Elem.text Parse.string)
-
-        let publishYearLine = 1 + int __LINE__
-        let _ = e |> Elem.childOpt "publishYear" (Elem.text Parse.string)
-
-        let file = Path.Combine(__SOURCE_DIRECTORY__, __SOURCE_FILE__)
-
-        let expectedParsedContent =
-            [ { CalledFunc = "attr"
-                CallerFile = file
-                CallerLine = bookIdLine
-                Which = Root "book"
-                Selector = Some "id"
-                ParsedValues = ["101"] }
-              { CalledFunc = "text"
-                CallerFile = file
-                CallerLine = authorsLine
-                Which = Child (Root "book", "author", 0)
-                Selector = None
-                ParsedValues = ["Tomas"]
-              }
-              { CalledFunc = "text"
-                CallerFile = file
-                CallerLine = authorsLine
-                Which = Child (Root "book", "author", 1)
-                Selector = None
-                ParsedValues = ["Jon"]
-              }
-              { CalledFunc = "children"
-                CallerFile = file
-                CallerLine = authorsLine
-                Which = Root "book"
-                Selector = Some "author"
-                ParsedValues = ["Tomas"; "Jon"]
-              }
-              { CalledFunc = "text"
-                CallerFile = file
-                CallerLine = titleLine
-                Which = Child (Root "book", "title", 0)
-                Selector = None
-                ParsedValues = ["Real-World Functional Programming"]
-              }
-              { CalledFunc = "child"
-                CallerFile = file
-                CallerLine = titleLine
-                Which = Root "book"
-                Selector = Some "title"
-                ParsedValues = ["Real-World Functional Programming"]
-              }
-              { CalledFunc = "childOpt"
-                CallerFile = file
-                CallerLine = publishYearLine
-                Which = Root "book"
-                Selector = Some "publishYear"
-                ParsedValues = []
-              }
-            ]
-
-        Assert.AreEqual(expectedParsedContent, log)

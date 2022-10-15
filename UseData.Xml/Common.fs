@@ -38,17 +38,3 @@ module WhichElem =
 /// Otherwise the string must originate from an attribute
 /// and `selector` contains the name of the attribute.
 type StringParser<'T> = WhichElem -> string option -> string -> 'T
-
-type ITracer =
-    abstract member OnParsed :
-        calledFunc:string *
-        callerFile:string *
-        callerLine:int *
-        which:WhichElem *
-        selector:string option *
-        parsedValues:'T[] -> unit
-    abstract member OnUnused :
-        which:WhichElem *
-        attrs:Dictionary<string, string> *
-        children:Dictionary<string, ResizeArray<XElement>> *
-        text:option<string> -> unit
