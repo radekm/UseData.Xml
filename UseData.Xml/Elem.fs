@@ -1,7 +1,6 @@
 namespace UseData.Xml
 
 open System
-open System.Collections.Generic
 open System.IO
 open System.Xml
 
@@ -9,32 +8,125 @@ exception WrongCount of which:WhichElem * msg:string
     with
         override me.Message = $"Error when parsing %A{me.which}: %s{me.msg}"
 
+/// Dictionary searches for keys sequentially.
+/// Designed for small number of key-value pairs.
+/// Each key-value pair from dictionary can be used (retrieved) at most once.
+/// Values are replaced by null after first use so when someone tries
+/// to use key-value pair again exception is raised.
+[<Sealed>]
+type internal DictionaryWithUsage<'T when 'T : not struct>() =
+    let mutable capacity = 32
+    let mutable length = 0
+    let mutable hashes : int[] = Array.zeroCreate capacity
+    let mutable keys : string[] = Array.zeroCreate capacity
+    let mutable values : 'T[] = Array.zeroCreate capacity
+    let mutable unusedCount = 0
+
+    /// Searches first by `hash` then by comparing `key`.
+    let indexOf (hash : int) (key : string) =
+        let rec find from =
+            if from < length then
+                match hashes.AsSpan().Slice(from, length - from).IndexOf(hash) with
+                | -1 -> -1
+                | i when keys[from + i] = key -> from + i
+                // Different key had same hash.
+                | i -> find (from + i + 1)
+            else -1
+        find 0
+
+    member _.Enlarge(orig : byref<'U[]>) =
+        let bigger = Array.zeroCreate capacity
+        orig.AsSpan().Slice(0, length).CopyTo(bigger.AsSpan().Slice(0, length))
+        orig <- bigger
+
+    member me.EnsureCapacity() =
+        if length = capacity then
+            capacity <- 2 * capacity
+
+            me.Enlarge(&keys)
+            me.Enlarge(&hashes)
+            me.Enlarge(&values)
+
+    /// Both `create` and `update` are allowed to raise exception.
+    member inline me.AddOrUpdate( key : string,
+                                  [<InlineIfLambda>] create : unit -> 'T,
+                                  [<InlineIfLambda>] update : 'T -> unit ) : 'T =
+
+        let hash = key.GetHashCode()
+        match indexOf hash key with
+        | -1 ->
+            let value = create ()
+            me.EnsureCapacity()
+            hashes[length] <- hash
+            keys[length] <- key
+            values[length] <- value
+            length <- length + 1
+            unusedCount <- unusedCount + 1
+            value
+        | index ->
+            let value = values[index]
+            update value
+            value
+
+    member inline me.Use(key : string, [<InlineIfLambda>] errorIfUsed : unit -> string) : ValueOption<'T> =
+        let hash = key.GetHashCode()
+        match indexOf hash key with
+        | -1 ->
+            me.EnsureCapacity()
+            hashes[length] <- hash
+            keys[length] <- key
+            values[length] <- Unchecked.defaultof<_>  // Used values are replaced by `null`.
+            length <- length + 1
+            ValueNone
+        | index ->
+            let value = values[index]
+            if isNull (value :> obj)
+            then failwith (errorIfUsed ())
+            else
+                values[index] <- Unchecked.defaultof<_>
+                unusedCount <- unusedCount - 1
+                ValueSome value
+
+    member _.MarkRemainingAsUsed() =
+        if unusedCount > 0 then
+            for i = 0 to length - 1 do
+                values[i] <- Unchecked.defaultof<_>
+            unusedCount <- 0
+
+    member _.UnusedCount = unusedCount
+
+    member _.ToArrayWithUnused() =
+        let mutable dest = 0
+        let result = Array.zeroCreate unusedCount
+        for i = 0 to length - 1 do
+            let value = values[i]
+            if not (isNull (value :> obj)) then
+                result[dest] <- keys[i], value
+                dest <- dest + 1
+        result
+
 [<Sealed>]
 type Elem internal ( which : WhichElem,
                      tracer : ITracer,
-                     unusedAttrs : Dictionary<string, string>,
+                     attrs : DictionaryWithUsage<string>,
                      // Note: It would be nicer to have `unusedChildren : Dictionary<string, Elem[]>`
                      // but then `parse` would need to do additional conversions and allocations
                      // which we avoided by using directly data structure from `parse`.
                      // One disadvantage is that `Elem[]` uses less memory
                      // than `{| Prefix : string; Elems : ResizeArray<Elem> |}`.
-                     unusedChildren : Dictionary<string, {| Prefix : string; Elems : ResizeArray<Elem> |}>,
+                     children : DictionaryWithUsage<{| Prefix : string; Elems : ResizeArray<Elem> |}>,
                      text : string,
                      textShallBeUsed : bool ) =
     let mutable disposed = false
 
-    member val private UsedAttrs = HashSet<string>(unusedAttrs.Count)
-        with get
-    member val private UsedChildren = HashSet<string>(unusedChildren.Count)
-        with get
+    member val private Attrs = attrs
+    member private _.Children = children
+    member private _.Text = text
     member val private UsedText = false
         with get, set
 
     member _.Name = which.Name
     member _.Which = which
-    member private _.UnusedAttrs = unusedAttrs
-    member private _.UnusedChildren = unusedChildren
-    member private _.Text = text
 
     member private _.Check() = if disposed then raise <| ObjectDisposedException $"Elem %A{which}"
 
@@ -46,23 +138,16 @@ type Elem internal ( which : WhichElem,
                 // Only if the text is non-whitespace.
                 let unusedText = if me.UsedText || not textShallBeUsed then None else Some me.Text
 
-                if unusedAttrs.Count > 0 || unusedChildren.Count > 0 || unusedText.IsSome then
-                    let unusedChildren =
-                          unusedChildren
-                          |> Seq.map (fun kv -> KeyValuePair(kv.Key, kv.Value.Elems.ToArray()))
-                          |> Dictionary
-                    tracer.OnUnused(which, unusedAttrs, unusedChildren, unusedText)
+                if attrs.UnusedCount > 0 || children.UnusedCount > 0 || unusedText.IsSome then
+                    let unusedChildren = children.ToArrayWithUnused() |> Array.map fst
+                    tracer.OnUnused(which, attrs.ToArrayWithUnused(), unusedChildren, unusedText)
 
     static member private AttrHelper(name : string, p : StringParser<'T>, elem : Elem) : 'T option =
         elem.Check()
 
-        if elem.UsedAttrs.Add name |> not then
-            failwithf $"Attribute %s{name} in elem %A{elem.Which} already used"
-
-        let found, value = elem.UnusedAttrs.Remove name
-        if found
-        then Some (p elem.Which (Some name) value)
-        else None
+        match elem.Attrs.Use(name, fun () -> $"Attribute %s{name} in elem %A{elem.Which} already used") with
+        | ValueNone -> None
+        | ValueSome value -> Some (p elem.Which (Some name) value)
 
     static member attrOpt (name : string) (p : StringParser<'T>) (elem : Elem) : 'T option =
         let parsed = Elem.AttrHelper(name, p, elem)
@@ -76,16 +161,12 @@ type Elem internal ( which : WhichElem,
     static member private ChildHelper(name : string, p : Elem -> 'T, elem : Elem) : 'T[] =
         elem.Check()
 
-        if elem.UsedChildren.Add name |> not then
-            failwithf $"Children %s{name} in elem %A{elem.Which} already used"
-
-        let found, children = elem.UnusedChildren.Remove name
-        if found
-        then
+        match elem.Children.Use(name, fun () -> $"Children %s{name} in elem %A{elem.Which} already used") with
+        | ValueNone -> Array.empty
+        | ValueSome children ->
             Array.init children.Elems.Count (fun i ->
                 use elem = children.Elems[i]
                 p elem)
-        else Array.empty
 
     static member children (name : string) (p : Elem -> 'T) (elem : Elem) : 'T[] =
         let parsed = Elem.ChildHelper(name, p, elem)
@@ -124,17 +205,15 @@ type Elem internal ( which : WhichElem,
     static member ignoreAll (elem : Elem) =
         elem.Check()
 
-        elem.UnusedAttrs |> Seq.iter (fun kv -> elem.UsedAttrs.Add kv.Key |> ignore)
-        elem.UnusedAttrs.Clear()
-        elem.UnusedChildren |> Seq.iter (fun kv -> elem.UsedChildren.Add kv.Key |> ignore)
-        elem.UnusedChildren.Clear()
+        elem.Attrs.MarkRemainingAsUsed()
+        elem.Children.MarkRemainingAsUsed()
         elem.UsedText <- true
 
 and ITracer =
     abstract member OnUnused :
         which:WhichElem *
-        attrs:Dictionary<string, string> *
-        children:Dictionary<string, Elem[]> *
+        attrs:(string * string)[] *
+        children:string[] *
         text:option<string> -> unit
 
 module Elem =
@@ -148,11 +227,11 @@ module Elem =
         // Expected initial state: Opening tag with attributes was processed.
         // Final state: `reader.NodeType` is `XmlNodeType.EndElement`.
         let rec parseContent (which : WhichElem) =
-            let children = Dictionary<string, {| Prefix : string; Elems : ResizeArray<Elem> |}>()
+            let children = DictionaryWithUsage<{| Prefix : string; Elems : ResizeArray<Elem> |}>()
             let mutable significantText = false  // We found non-whitespace text or CDATA.
 
             let inline processCData (value : string) =
-                if children.Count <> 0 then
+                if children.UnusedCount <> 0 then
                     failwith $"Element %A{which} contains mixed content"
                 significantText <- true
                 text.Append(value) |> ignore
@@ -162,7 +241,7 @@ module Elem =
                 // Otherwise we save whitespace
                 // because it could be part of text
                 // (if there are no child elements we return text even if it contains only whitespace).
-                if children.Count = 0 then
+                if children.UnusedCount = 0 then
                     text.Append(value) |> ignore
 
             // We assume that if we reach EOF here, the exception will be thrown
@@ -181,18 +260,15 @@ module Elem =
                     let name = reader.LocalName
                     let prefix = reader.Prefix
                     let children =
-                        match children.TryGetValue(name) with
-                        | true, existingChildren ->
-                            if existingChildren.Prefix <> prefix then
-                                failwithf "%s %s %s"
-                                    $"Element %A{which} contains multiple child elements "
-                                    $"with same local name %s{name} "
-                                    $"but different prefixes %s{existingChildren.Prefix} and %s{prefix}"
-                            existingChildren
-                        | false, _ ->
-                            let newChildren = {| Prefix = prefix; Elems = ResizeArray() |}
-                            children.Add(name, newChildren)
-                            newChildren
+                        children.AddOrUpdate(
+                            name,
+                            (fun () -> {| Prefix = prefix; Elems = ResizeArray() |}),
+                            (fun children ->
+                                if children.Prefix <> prefix then
+                                    failwithf "%s %s %s"
+                                        $"Element %A{which} contains multiple child elements "
+                                        $"with same local name %s{name} "
+                                        $"but different prefixes %s{children.Prefix} and %s{prefix}"))
                     let which = Child (which, name, children.Elems.Count)
                     let elem = parseElement which
                     children.Elems.Add elem
@@ -206,7 +282,7 @@ module Elem =
                 | nodeType -> failwith $"Element %A{which} contains unexpected node: %A{nodeType}"
             struct {| Children = children
                       Text =
-                          if children.Count = 0
+                          if children.UnusedCount = 0
                           then
                               let result = text.ToString()
                               text.Clear() |> ignore
@@ -220,17 +296,21 @@ module Elem =
         //              If it was non-empty element then `reader.NodeType` is `XmlNodeType.EndElement`.
         and parseElement (which : WhichElem) =
             let isEmptyElement = reader.IsEmptyElement  // Calling this after reading attributes doesn't work.
-            let attributes = Dictionary<string, string>()
+            let attributes = DictionaryWithUsage<string>()
             while reader.MoveToNextAttribute() do
                 let name = reader.LocalName
                 let value = reader.Value
-                if attributes.TryAdd(name, value) |> not then
-                    failwithf "%s %s"
-                        $"Element %A{which} contains multiple attributes "
-                        $"with same local name %s{name}"
+                attributes.AddOrUpdate(
+                    name,
+                    (fun () -> value),
+                    (fun _ ->
+                        failwithf "%s %s"
+                            $"Element %A{which} contains multiple attributes "
+                            $"with same local name %s{name}"))
+                |> ignore
             if isEmptyElement then
                 // Element without content.
-                new Elem(which, tracer, attributes, Dictionary(), "", false)
+                new Elem(which, tracer, attributes, DictionaryWithUsage(), "", false)
             else
                 let content = parseContent which
                 new Elem(which, tracer, attributes, content.Children, content.Text, content.SignificantText)

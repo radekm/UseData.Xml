@@ -161,8 +161,8 @@ module InvalidXml =
 
 module TracingUnusedContent =
     type Unused = { Which : WhichElem
-                    UnusedAttrs : Set<string>
-                    UnusedChildren : Set<string>
+                    UnusedAttrs : (string * string)[]
+                    UnusedChildren : string[]
                     UnusedText : string option }
 
     let toElem onUnused str =
@@ -170,8 +170,8 @@ module TracingUnusedContent =
         let unusedTracer = { new ITracer with
                              override _.OnUnused(which, unusedAttrs, unusedChildren, unusedText) =
                                  onUnused { Which = which
-                                            UnusedAttrs = unusedAttrs |> keys
-                                            UnusedChildren = unusedChildren |> keys
+                                            UnusedAttrs = unusedAttrs
+                                            UnusedChildren = unusedChildren
                                             UnusedText = unusedText }
                            }
         Elem.parseFromString unusedTracer str
@@ -189,8 +189,8 @@ module TracingUnusedContent =
     let ``unused element`` () =
         let expectedUnusedContent =
             [ { Which = Child (Root "company", "address", 0)
-                UnusedAttrs = Set.empty
-                UnusedChildren = Set.ofList ["city"]
+                UnusedAttrs = [||]
+                UnusedChildren = [| "city" |]
                 UnusedText = None
               } ]
 
@@ -215,8 +215,8 @@ module TracingUnusedContent =
     let ``unused attribute`` () =
         let expectedUnusedContent =
             [ { Which = Child (Root "company", "address", 0)
-                UnusedAttrs = Set.ofList ["street"]
-                UnusedChildren = Set.empty
+                UnusedAttrs = [| "street", "Baker Street" |]
+                UnusedChildren = [||]
                 UnusedText = None
               } ]
 
@@ -237,8 +237,8 @@ module TracingUnusedContent =
     let ``unused text`` () =
         let expectedUnusedContent =
             [ { Which = Child (Child (Root "company", "address", 0), "city", 0)
-                UnusedAttrs = Set.empty
-                UnusedChildren = Set.empty
+                UnusedAttrs = [||]
+                UnusedChildren = [||]
                 UnusedText = Some "London"
               } ]
 
