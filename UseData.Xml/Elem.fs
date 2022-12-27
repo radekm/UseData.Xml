@@ -218,6 +218,7 @@ and ITracer =
 
 module Elem =
     /// `reader` must ignore comments and processing instructions.
+    /// Prefixes and namespaces are ignored.
     // Assumes that `reader` checks that root element exists
     // and that elements are properly nested.
     let parse (tracer : ITracer) (reader : XmlReader) =
@@ -299,15 +300,16 @@ module Elem =
             let attributes = DictionaryWithUsage<string>()
             while reader.MoveToNextAttribute() do
                 let name = reader.LocalName
-                let value = reader.Value
-                attributes.AddOrUpdate(
-                    name,
-                    (fun () -> value),
-                    (fun _ ->
-                        failwithf "%s %s"
-                            $"Element %A{which} contains multiple attributes "
-                            $"with same local name %s{name}"))
-                |> ignore
+                if reader.Prefix <> "xmlns" && name <> "xmlns" then
+                    let value = reader.Value
+                    attributes.AddOrUpdate(
+                        name,
+                        (fun () -> value),
+                        (fun _ ->
+                            failwithf "%s %s"
+                                $"Element %A{which} contains multiple attributes "
+                                $"with same local name %s{name}"))
+                    |> ignore
             if isEmptyElement then
                 // Element without content.
                 new Elem(which, tracer, attributes, DictionaryWithUsage(), "", false)

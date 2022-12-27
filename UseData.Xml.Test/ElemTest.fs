@@ -60,6 +60,50 @@ module Basic =
                {| Name = "Harry"; Address = Some "Little Whinging" |} |],
             people)
 
+    let ``prefixes - input`` = """
+    <root>
+        <h:table xmlns:h="http://www.w3.org/TR/html4/">
+            <h:tr>
+                <h:td>Cell</h:td>
+            </h:tr>
+        </h:table>
+    </root>
+    """
+
+    [<Test>]
+    let prefixes () =
+        use e = ``prefixes - input`` |> toElem
+        let rowData =
+            e
+            |> Elem.child "table" (fun e ->
+                e |> Elem.child "tr" (fun e ->
+                    e |> Elem.children "td" (Elem.text Parse.string)))
+        Assert.AreEqual(
+            [| "Cell" |],
+            rowData)
+
+    let ``default namespace - input`` = """
+    <root>
+        <table xmlns="http://www.w3.org/TR/html4/">
+            <tr>
+                <td>Cell</td>
+            </tr>
+        </table>
+    </root>
+    """
+
+    [<Test>]
+    let ``default namespace`` () =
+        use e = ``default namespace - input`` |> toElem
+        let rowData =
+            e
+            |> Elem.child "table" (fun e ->
+                e |> Elem.child "tr" (fun e ->
+                    e |> Elem.children "td" (Elem.text Parse.string)))
+        Assert.AreEqual(
+            [| "Cell" |],
+            rowData)
+
 module Errors =
     let ``multiple children when single child is expected - input`` = """
     <person>
