@@ -151,3 +151,33 @@ let tracer = { new ITracer with
 let parse () =
     use root = Elem.parseFromString tracer message
     parseOrderBookDelta root
+
+open System.IO
+open System.Xml
+
+// To get only performance of functions in `UseData.Xml` we need to subtract time and memory
+// used by `XmlReader` which are shown by `readByXmlReader`.
+let readByXmlReader () =
+    let mutable i = 0
+
+    let settings = XmlReaderSettings()
+    settings.IgnoreComments <- true
+    settings.IgnoreProcessingInstructions <- true
+    use stringReader = new StringReader(message)
+    use reader = XmlReader.Create(stringReader, settings)
+    while reader.Read() do
+        match reader.NodeType with
+        | XmlNodeType.Element ->
+            i <- i + reader.Prefix.Length + reader.LocalName.Length
+            if reader.IsEmptyElement then
+                i <- i + 1000
+            while reader.MoveToNextAttribute() do
+                i <- i + reader.Prefix.Length + reader.LocalName.Length + reader.Value.Length
+        | XmlNodeType.EndElement -> i <- i - reader.Prefix.Length - reader.LocalName.Length
+        | XmlNodeType.Text -> i <- i + reader.Value.Length
+        | XmlNodeType.Whitespace -> i <- i + reader.Value.Length
+        | XmlNodeType.CDATA -> i <- i + reader.Value.Length
+        | XmlNodeType.XmlDeclaration -> ()
+        | t -> failwith $"Unsupported node type %A{t}"
+
+    i
