@@ -34,12 +34,12 @@ type internal DictionaryWithUsage<'T when 'T : not struct>() =
             else -1
         find 0
 
-    member _.Enlarge(orig : byref<'U[]>) =
+    member private _.Enlarge(orig : byref<'U[]>) =
         let bigger = Array.zeroCreate capacity
         orig.AsSpan().Slice(0, length).CopyTo(bigger.AsSpan().Slice(0, length))
         orig <- bigger
 
-    member me.EnsureCapacity() =
+    member private me.EnsureCapacity() =
         if length = capacity then
             capacity <- 2 * capacity
 
@@ -105,6 +105,13 @@ type internal DictionaryWithUsage<'T when 'T : not struct>() =
                 dest <- dest + 1
         result
 
+type ITracer =
+    abstract member OnUnused :
+        which:WhichElem *
+        attrs:(string * string)[] *
+        children:string[] *
+        text:option<string> -> unit
+
 [<Sealed>]
 type Elem internal ( which : WhichElem,
                      tracer : ITracer,
@@ -119,16 +126,16 @@ type Elem internal ( which : WhichElem,
                      textShallBeUsed : bool ) =
     let mutable disposed = false
 
-    member val private Attrs = attrs
-    member private _.Children = children
-    member private _.Text = text
-    member val private UsedText = false
+    member internal _.Attrs = attrs
+    member internal _.Children = children
+    member internal _.Text = text
+    member val internal UsedText = false
         with get, set
 
     member _.Name = which.Name
     member _.Which = which
 
-    member private _.Check() = if disposed then raise <| ObjectDisposedException $"Elem %A{which}"
+    member internal _.Check() = if disposed then raise <| ObjectDisposedException $"Elem %A{which}"
 
     interface IDisposable with
         override me.Dispose() =
@@ -142,23 +149,23 @@ type Elem internal ( which : WhichElem,
                     let unusedChildren = children.ToArrayWithUnused() |> Array.map fst
                     tracer.OnUnused(which, attrs.ToArrayWithUnused(), unusedChildren, unusedText)
 
-    static member private AttrHelper(name : string, p : StringParser<'T>, elem : Elem) : 'T option =
+module Elem =
+
+    let inline private attrHelper (name : string) (p : StringParser<'T>) (elem : Elem) : 'T option =
         elem.Check()
 
         match elem.Attrs.Use(name, fun () -> $"Attribute %s{name} in elem %A{elem.Which} already used") with
         | ValueNone -> None
         | ValueSome value -> Some (p elem.Which (Some name) value)
 
-    static member attrOpt (name : string) (p : StringParser<'T>) (elem : Elem) : 'T option =
-        let parsed = Elem.AttrHelper(name, p, elem)
-        parsed
+    let attrOpt (name : string) (p : StringParser<'T>) (elem : Elem) : 'T option = attrHelper name p elem
 
-    static member attr (name : string) (p : StringParser<'T>) (elem : Elem) : 'T =
-        match Elem.AttrHelper(name, p, elem) with
+    let attr (name : string) (p : StringParser<'T>) (elem : Elem) : 'T =
+        match attrHelper name p elem with
         | None -> raise <| WrongCount (elem.Which, $"Expected one attribute %s{name}")
         | Some parsed -> parsed
 
-    static member private ChildHelper(name : string, p : Elem -> 'T, elem : Elem) : 'T[] =
+    let inline private childHelper (name : string) (p : Elem -> 'T) (elem : Elem) : 'T[] =
         elem.Check()
 
         match elem.Children.Use(name, fun () -> $"Children %s{name} in elem %A{elem.Which} already used") with
@@ -168,12 +175,10 @@ type Elem internal ( which : WhichElem,
                 use elem = children.Elems[i]
                 p elem)
 
-    static member children (name : string) (p : Elem -> 'T) (elem : Elem) : 'T[] =
-        let parsed = Elem.ChildHelper(name, p, elem)
-        parsed
+    let children (name : string) (p : Elem -> 'T) (elem : Elem) : 'T[] = childHelper name p elem
 
-    static member childOpt (name : string) (p : Elem -> 'T) (elem : Elem) : 'T option =
-        let parsed = Elem.ChildHelper(name, p, elem)
+    let childOpt (name : string) (p : Elem -> 'T) (elem : Elem) : 'T option =
+        let parsed = childHelper name p elem
         let result =
             match parsed with
             | [||] -> None
@@ -181,15 +186,15 @@ type Elem internal ( which : WhichElem,
             | _ -> raise <| WrongCount (elem.Which, $"Expected at most one child %s{name}")
         result
 
-    static member child (name : string) (p : Elem -> 'T) (elem : Elem) : 'T =
-        let parsed = Elem.ChildHelper(name, p, elem)
+    let child (name : string) (p : Elem -> 'T) (elem : Elem) : 'T =
+        let parsed = childHelper name p elem
         let result =
             match parsed with
             | [| x |] -> x
             | _ -> raise <| WrongCount (elem.Which, $"Expected one child %s{name}")
         result
 
-    static member private TextHelper(p : StringParser<'T>, elem : Elem) : 'T =
+    let inline private textHelper (p : StringParser<'T>) (elem : Elem) : 'T =
         elem.Check()
 
         if elem.UsedText then
@@ -198,25 +203,15 @@ type Elem internal ( which : WhichElem,
 
         p elem.Which None elem.Text
 
-    static member text (p : StringParser<'T>) (elem : Elem) : 'T =
-        let parsed = Elem.TextHelper(p, elem)
-        parsed
+    let text (p : StringParser<'T>) (elem : Elem) : 'T = textHelper p elem
 
-    static member ignoreAll (elem : Elem) =
+    let ignoreAll (elem : Elem) =
         elem.Check()
 
         elem.Attrs.MarkRemainingAsUsed()
         elem.Children.MarkRemainingAsUsed()
         elem.UsedText <- true
 
-and ITracer =
-    abstract member OnUnused :
-        which:WhichElem *
-        attrs:(string * string)[] *
-        children:string[] *
-        text:option<string> -> unit
-
-module Elem =
     /// `reader` must ignore comments and processing instructions.
     /// Prefixes and namespaces are ignored.
     // Assumes that `reader` checks that root element exists

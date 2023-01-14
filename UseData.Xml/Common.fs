@@ -1,6 +1,6 @@
 ﻿namespace UseData.Xml
 
-open System.Collections.Generic
+open System
 open System.Xml.Linq
 
 /// Designates an element in a document.
