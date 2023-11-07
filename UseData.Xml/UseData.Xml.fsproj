@@ -29,6 +29,7 @@
         <Compile Include="Common.fs" />
         <Compile Include="Elem.fs" />
         <Compile Include="Parse.fs" />
+        <Compile Include="ElemX.fs" />
     </ItemGroup>
 
 </Project>

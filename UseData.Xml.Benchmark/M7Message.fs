@@ -152,6 +152,255 @@ let parse () =
     use root = Elem.parseFromString tracer message
     parseOrderBookDelta root
 
+// -------------------------------------------------------------------------------------------
+// Experimental callback-based API
+
+[<Sealed>]
+type OrderBuilder() =
+    let mutable orderId = 0UL
+    let mutable orderIdInitialized = false
+
+    let mutable price = 0L
+    let mutable priceInitialized = false
+
+    let mutable quantity = 0u
+    let mutable quantityInitialized = false
+
+    let mutable entryTime = DateTimeOffset.MaxValue
+    let mutable entryTimeInitialized = false
+
+    member _.OrderId
+        with get () = orderId
+        and set v =
+            if orderIdInitialized then
+               failwith "OrderId is already initialized"
+            orderId <- v
+            orderIdInitialized <- true
+
+    member _.Price
+        with get () = price
+        and set v =
+            if priceInitialized then
+               failwith "Price is already initialized"
+            price <- v
+            priceInitialized <- true
+
+    member _.Quantity
+        with get () = quantity
+        and set v =
+            if quantityInitialized then
+               failwith "Quantity is already initialized"
+            quantity <- v
+            quantityInitialized <- true
+
+    member _.EntryTime
+        with get () = entryTime
+        and set v =
+            if entryTimeInitialized then
+               failwith "EntryTime is already initialized"
+            entryTime <- v
+            entryTimeInitialized <- true
+
+    member _.Build() =
+        if not orderIdInitialized then
+            failwith "OrderId is not initialized"
+        if not priceInitialized then
+            failwith "Price is not initialized"
+        if not quantityInitialized then
+            failwith "Quantity is not initialized"
+        if not entryTimeInitialized then
+            failwith "EntryTime is not initialized"
+        { OrderId = orderId
+          Price = price
+          Quantity = quantity
+          EntryTime = entryTime }
+
+[<Sealed>]
+type OrderBookDeltaBuilder() =
+    let mutable contractId = 0UL
+    let mutable contractIdInitialized = false
+
+    let mutable areaId = Unchecked.defaultof<string>
+    let mutable areaIdInitialized = false
+
+    let mutable revision = 0u
+    let mutable revisionInitialized = false
+
+    let buy = ResizeArray<Order>()
+    let sell = ResizeArray<Order>()
+
+    member _.ContractId
+        with get () = contractId
+        and set v =
+            if contractIdInitialized then
+               failwith "ContractId is already initialized"
+            contractId <- v
+            contractIdInitialized <- true
+
+    member _.AreaId
+        with get () = areaId
+        and set v =
+            if areaIdInitialized then
+               failwith "AreaId is already initialized"
+            areaId <- v
+            areaIdInitialized <- true
+
+    member _.Revision
+        with get () = revision
+        and set v =
+            if revisionInitialized then
+               failwith "Revision is already initialized"
+            revision <- v
+            revisionInitialized <- true
+
+    member _.AddBuy(item : Order) =
+        buy.Add(item)
+
+    member _.AddSell(item : Order) =
+        sell.Add(item)
+
+    member _.Build() =
+        if not contractIdInitialized then
+            failwith "ContractId is not initialized"
+        if not areaIdInitialized then
+            failwith "AreaId is not initialized"
+        if not revisionInitialized then
+            failwith "Revision is not initialized"
+        { ContractId = contractId
+          AreaId = areaId
+          Revision = revision
+          Buy = buy.ToArray()
+          Sell = sell.ToArray() }
+
+let dummyWhich = Root ""
+
+let handleUnusedAttr (n : string) (v : string) (c : ElemX.Cursor) =
+    printfn "Element %A contains unused attribute %s=%s" c.Which n v
+
+let handleUnusedElem (n : string) (c : ElemX.Cursor) =
+    printfn "Element %A contains unused element %s" c.Which n
+
+let handleUnusedText (text : string) (c : ElemX.Cursor) =
+    if not (String.IsNullOrWhiteSpace text) then
+        printfn "Element %A contains unused text" c.Which
+
+let inline parseOrderX (c : ElemX.Cursor) =
+
+    let b = OrderBuilder()
+    c
+    |> ElemX.parseElem
+        (fun n v ->
+            match n with
+            | "ordrId" -> b.OrderId <- Parse.uint64 dummyWhich None v
+            | "px" -> b.Price <- Parse.int64 dummyWhich None v
+            | "qty" -> b.Quantity <- Parse.uint dummyWhich None v
+            | "ordrEntryTime" -> b.EntryTime <- Parse.dateTimeOffset dummyWhich None v
+            | _ -> handleUnusedAttr n v c)
+        handleUnusedElem
+        (fun text -> handleUnusedText text c)
+
+    b.Build()
+
+// NOTE: Even though this function doesn't check whether optional attributes and elements appear more than once
+//       it's extremely complex when compared to `parse`.
+let inline parseOrderBookDeltasX (c : ElemX.Cursor) =
+    let result = ResizeArray()
+    let mutable standardHeaderSeen = false
+
+    c
+    |> ElemX.parseElem
+        (fun n v -> handleUnusedAttr n v c)
+        (fun n c ->
+            match n with
+            | "StandardHeader" ->
+                if standardHeaderSeen then
+                    failwith "Duplicate StandardHeader"
+                standardHeaderSeen <- true
+
+                let mutable marketIdSeen = false
+
+                c
+                |> ElemX.parseElem
+                    (fun n v ->
+                        match n with
+                        | "marketId" ->
+                            if marketIdSeen then
+                                failwith "Duplicate marketId"
+                            marketIdSeen <- true
+                        | _ -> handleUnusedAttr n v c)
+                    handleUnusedElem
+                    (fun text -> handleUnusedText text c)
+
+                if not marketIdSeen then
+                    failwith "Missing marketId"
+            | "OrdrbookList" ->
+                c
+                |> ElemX.parseElem
+                    (fun n v -> handleUnusedAttr n v c)
+                    (fun n c ->
+                        match n with
+                        | "OrdrBook" ->
+                            let b = OrderBookDeltaBuilder()
+
+                            c
+                            |> ElemX.parseElem
+                                (fun n v ->
+                                    match n with
+                                    | "lastPx" -> Parse.int64 dummyWhich None v |> ignore
+                                    | "lastQty" -> Parse.uint dummyWhich None v |> ignore
+                                    | "totalQty" -> Parse.uint dummyWhich None v |> ignore
+                                    | "lastTradeTime" -> Parse.dateTimeOffset dummyWhich None v |> ignore
+                                    | "pxDir" -> Parse.int dummyWhich None v |> ignore
+                                    | "highPx" -> Parse.int64 dummyWhich None v |> ignore
+                                    | "lowPx" -> Parse.int64 dummyWhich None v |> ignore
+                                    | "contractId" -> b.ContractId <- Parse.uint64 dummyWhich None v
+                                    | "dlvryAreaId" -> b.AreaId <- Parse.stringNonWhitespace dummyWhich None v
+                                    | "revisionNo" -> b.Revision <- Parse.uint dummyWhich None v
+                                    | _ -> handleUnusedAttr n v c)
+                                (fun n c ->
+                                    match n with
+                                    | "BuyOrdrList" ->
+                                        c
+                                        |> ElemX.parseElem
+                                            (fun n v -> handleUnusedAttr n v c)
+                                            (fun n c ->
+                                                match n with
+                                                | "OrdrBookEntry" -> b.AddBuy(parseOrderX c)
+                                                | _ -> handleUnusedElem n c)
+                                            (fun text -> handleUnusedText text c)
+                                    | "SellOrdrList" ->
+                                        c
+                                        |> ElemX.parseElem
+                                            (fun n v -> handleUnusedAttr n v c)
+                                            (fun n c ->
+                                                match n with
+                                                | "OrdrBookEntry" -> b.AddSell(parseOrderX c)
+                                                | _ -> handleUnusedElem n c)
+                                            (fun text -> handleUnusedText text c)
+                                    | _ -> handleUnusedElem n c)
+                                (fun text -> handleUnusedText text c)
+
+                            result.Add(b.Build())
+                        | _ -> handleUnusedElem n c)
+                    (fun text -> handleUnusedText text c)
+            | _ -> handleUnusedElem n c)
+        (fun text -> handleUnusedText text c)
+
+    if not standardHeaderSeen then
+        failwith "Missing StandardHeader"
+
+    result
+
+let parseByExperimentalCallbackApi () =
+    let mutable result = [||]
+    ElemX.parseFromString
+        (fun _ c -> result <- (parseOrderBookDeltasX c).ToArray())
+        message
+    result
+
+// -------------------------------------------------------------------------------------------
+// XmlReader
+
 open System.IO
 open System.Xml
 
