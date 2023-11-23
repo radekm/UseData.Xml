@@ -20,11 +20,6 @@
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     </PropertyGroup>
 
-    <!-- Source Link -->
-    <ItemGroup>
-        <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.1.1" PrivateAssets="All" />
-    </ItemGroup>
-
     <ItemGroup>
         <Compile Include="Common.fs" />
         <Compile Include="Elem.fs" />
